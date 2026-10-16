@@ -74,7 +74,7 @@ importlib.import_module('sglang_exl3.offload.cpu_tier').load_dev(); print('trell
 # Fail closed unless every compiled extension (AOT and pre-built JIT) carries SASS for sm_86, sm_89 and sm_120.
 RUN set -e; n=0; \
  for f in $(find /opt/trellis-serve/cuda/csrc/build -name '*.so') \
-          $(python3 -c "import exllamav3_ext; print(exllamav3_ext.__file__)"); do \
+          $(python3 -c "import torch, exllamav3_ext; print(exllamav3_ext.__file__)"); do \
    archs=$(cuobjdump --list-elf "$f" 2>/dev/null | grep -oE 'sm_[0-9]+a?' | sort -u | tr '\n' ' '); \
    echo "$(basename "$f"): $archs"; \
    for sm in sm_86 sm_89 sm_120; do case " $archs" in *" $sm "*) ;; *) echo "missing $sm in $f"; exit 1;; esac; done; \
