@@ -27,9 +27,9 @@ LABEL ai.omarchy.model.repo="turboderp/Qwen3.8-Flash-Next-exl3"
 LABEL ai.omarchy.model.revision="69e33439ae950f17bcbe95c98f117d80f759ab6d"
 
 # Serving code now lives in sybil-solutions/qwen-serve (qwen3.8-flash-next/b70-offload); the old repository is archived.
-# d163a2f: Qwen4-Exp MTP draft shim + MTP MoE layer pinned in the RAM tier (NEXTN MTP works in both tier modes).
+# b257e3e: + exact decode miss path (EXL3_EXACT_MISS, _moe_a8x.so); d163a2f: MTP shim + MTP MoE layer pinned in the RAM tier.
 ARG QWEN_B70_REPO=https://github.com/sybil-solutions/qwen-serve
-ARG QWEN_B70_COMMIT=d163a2f0dc47ab41c299eb8dca06520ef077b098
+ARG QWEN_B70_COMMIT=b257e3e51a77ef052e18fafab2687d5f8f873931
 ARG QWEN_B70_DIR=qwen3.8-flash-next/b70-offload
 LABEL ai.omarchy.qwen38-flash-next-b70-offload.commit="${QWEN_B70_COMMIT}"
 
@@ -47,6 +47,8 @@ RUN git init -q /tmp/qwen-serve \
 # Kernels: _moe_a8.so (NVMe-tier MoE kernels) and the SYCL sparse attention + selection library.
 RUN bash /opt/qwen-b70/kernels/moe-a8/build.sh \
  && test -s /opt/qwen-b70/kernels/moe-a8/_moe_a8.so \
+ && MOE_EXACT=1 bash /opt/qwen-b70/kernels/moe-a8/build.sh \
+ && test -s /opt/qwen-b70/kernels/moe-a8/_moe_a8x.so \
  && bash /opt/qwen-b70/kernels/n107-qsa/csrc/build_sycl.sh \
  && test -s /opt/qwen-b70/kernels/n107-qsa/build/qsa_row_sycl.so
 
@@ -54,6 +56,7 @@ RUN bash /opt/qwen-b70/kernels/moe-a8/build.sh \
 RUN P=/opt/trellis-serve/xpu/exl3xpu \
  && cp /opt/qwen-b70/plugin/sglang_plugin.tier.py $P/sglang_plugin.py \
  && cp /opt/qwen-b70/plugin/exl3xpu/nvtier.py $P/nvtier.py \
+ && cp /opt/qwen-b70/plugin/exl3xpu/exact_miss.py $P/exact_miss.py \
  && cp $P/qsa_xpu.py $P/qsa_xpu_stock.py \
  && cp /opt/qwen-b70/kernels/n107-qsa/qsa_xpu_base.py $P/qsa_xpu_base.py \
  && cp /opt/qwen-b70/kernels/n107-qsa/qsa_xpu_overlay.py $P/qsa_xpu.py \
