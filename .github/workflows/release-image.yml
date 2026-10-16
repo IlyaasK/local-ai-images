@@ -434,8 +434,9 @@ jobs:
               run --entrypoint sh "$ref" -c 'test -x /opt/entrypoint.sh && test -x /opt/sglang/bin/python && test -s /opt/sglang-exl3/tokenmaps/qwen38_hot32k_v2.pt && test -s /opt/sglang-exl3/tokenmaps/qwen36_hot32k_v2.pt'
               pass "/opt/entrypoint.sh, /opt/sglang/bin/python and both token maps present"
               want=$(docker inspect "$ref" --format '{{ index .Config.Labels "ai.omarchy.cuda.archs" }}')
-              arch=$(run --entrypoint sh "$ref" -c 'for f in /opt/sglang-exl3/csrc/build/lib/*.so $(python3 -c "import exllamav3_ext; print(exllamav3_ext.__file__)"); do echo "$(basename "$f"): $(cuobjdump --list-elf "$f" | grep -oE "sm_[0-9]+a?" | sort -u | tr "\n" " ")"; done')
+              arch=$(run --entrypoint sh "$ref" -c 'for f in /opt/sglang-exl3/csrc/build/lib/*.so $(python3 -c "import torch, exllamav3_ext; print(exllamav3_ext.__file__)"); do echo "$(basename "$f"): $(cuobjdump --list-elf "$f" | grep -oE "sm_[0-9]+a?" | sort -u | tr "\n" " ")"; done')
               echo "$arch"
+              [ "$(echo "$arch" | grep -c '\.so: sm_')" -eq 3 ] || { echo "::error::expected 3 extensions with SASS"; exit 1; }
               for a in $(echo "$want" | tr ';' ' '); do sm="sm_$(echo "$a" | tr -d .)"
                 echo "$arch" | while IFS= read -r l; do case " ${l#*: } " in *" $sm "*) ;; *) echo "::error::$sm missing: $l"; exit 1;; esac; done
               done
