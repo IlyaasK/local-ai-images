@@ -31,7 +31,7 @@ on:
         required: false
         default: ""
       engine:
-        description: "smoke mode: sglang | vllm | tabby | llama | dsv41 | gateway | exl3xpu (CPU checks)"
+        description: "smoke mode: sglang | vllm | tabby | llama | dsv41 | gateway | exl3xpu | sglang-exl3 (CPU checks)"
         required: false
         default: ""
       namespace:
@@ -424,6 +424,26 @@ jobs:
                 echo '```'
               } >> "$GITHUB_STEP_SUMMARY"
               pass "Tabby source bundle exported (no weights) + shas + direct_url + fields; PARITY-ONLY, not server usage==sent" ;;
+            sglang-exl3)
+              # EXL3 SGLang images (sglang-exl3-multiarch): CPU-only. Every native extension imports, the plugin entry
+              # point is registered, the recipe paths exist, the kernels carry SASS for every labelled arch, and
+              # launch_server accepts the registry engine's parser flags. No GPU, no model, no server.
+              run(){ timeout 300 docker run --rm --network none --memory 8g --cpus 2 "$@"; }
+              run --entrypoint /opt/sglang/bin/python3 "$ref" -c "import torch, sglang, exllamav3_ext, aikido_exl3_kernels, aikido_exl3_moe_kernels; from importlib.metadata import entry_points as e, version as v; assert any(x.value == 'sglang_exl3.plugin:activate' for x in e(group='sglang.srt.plugins')); print('torch', torch.__version__, 'sglang', sglang.__version__, 'exllamav3', v('exllamav3'))"
+              pass "torch, sglang, exllamav3_ext, aikido_exl3_kernels, aikido_exl3_moe_kernels import; sglang.srt.plugins exl3 entry point registered"
+              run --entrypoint sh "$ref" -c 'test -x /opt/entrypoint.sh && test -x /opt/sglang/bin/python && test -s /opt/sglang-exl3/tokenmaps/qwen38_hot32k_v2.pt && test -s /opt/sglang-exl3/tokenmaps/qwen36_hot32k_v2.pt'
+              pass "/opt/entrypoint.sh, /opt/sglang/bin/python and both token maps present"
+              want=$(docker inspect "$ref" --format '{{ index .Config.Labels "ai.omarchy.cuda.archs" }}')
+              arch=$(run --entrypoint sh "$ref" -c 'for f in /opt/sglang-exl3/csrc/build/lib/*.so $(python3 -c "import exllamav3_ext; print(exllamav3_ext.__file__)"); do echo "$(basename "$f"): $(cuobjdump --list-elf "$f" | grep -oE "sm_[0-9]+a?" | sort -u | tr "\n" " ")"; done')
+              echo "$arch"
+              for a in $(echo "$want" | tr ';' ' '); do sm="sm_$(echo "$a" | tr -d .)"
+                echo "$arch" | while IFS= read -r l; do case " ${l#*: } " in *" $sm "*) ;; *) echo "::error::$sm missing: $l"; exit 1;; esac; done
+              done
+              { echo '```'; echo "$arch"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+              pass "every extension carries SASS for the labelled archs ($want)"
+              run --entrypoint /opt/sglang/bin/python3 "$ref" -m sglang.launch_server --model-path /tmp/none --tool-call-parser qwen3_coder --reasoning-parser qwen3 --help >/dev/null
+              pass "launch_server accepts --tool-call-parser qwen3_coder --reasoning-parser qwen3"
+              ;;
             *) echo "::error::unknown engine '$e'"; exit 1;;
           esac
           echo "CPU smoke passed (config-source + parser/flag resolution verified; NOT a runtime inference test)" >> "$GITHUB_STEP_SUMMARY"
