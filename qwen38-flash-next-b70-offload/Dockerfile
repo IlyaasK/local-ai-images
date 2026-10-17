@@ -27,9 +27,9 @@ LABEL ai.omarchy.model.repo="turboderp/Qwen3.8-Flash-Next-exl3"
 LABEL ai.omarchy.model.revision="69e33439ae950f17bcbe95c98f117d80f759ab6d"
 
 # Serving code now lives in sybil-solutions/qwen-serve (qwen3.8-flash-next/b70-offload); the old repository is archived.
-# b257e3e: + exact decode miss path (EXL3_EXACT_MISS, _moe_a8x.so); d163a2f: MTP shim + MTP MoE layer pinned in the RAM tier.
+# 730d810: + MTP MoE layer as NVMe store layer 48 (pack-store builds a 49-layer, 46.8 GB store); b257e3e: + exact decode miss path (EXL3_EXACT_MISS, _moe_a8x.so); d163a2f: MTP shim + MTP MoE layer pinned in the RAM tier.
 ARG QWEN_B70_REPO=https://github.com/sybil-solutions/qwen-serve
-ARG QWEN_B70_COMMIT=b257e3e51a77ef052e18fafab2687d5f8f873931
+ARG QWEN_B70_COMMIT=730d8101d0ff7d53d7d6a3b980c3bae0c3b84181
 ARG QWEN_B70_DIR=qwen3.8-flash-next/b70-offload
 LABEL ai.omarchy.qwen38-flash-next-b70-offload.commit="${QWEN_B70_COMMIT}"
 
