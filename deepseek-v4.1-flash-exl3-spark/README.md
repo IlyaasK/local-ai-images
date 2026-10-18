@@ -44,7 +44,7 @@ node's fabric IPv4:
 
 ```bash
 git clone https://github.com/sudoingX/dgx-spark-deepseek-v41 ~/dsv41_recipe && git -C ~/dsv41_recipe checkout cc59c360
-IMAGE=ghcr.io/sybil-solutions/deepseek-v4.1-flash-exl3-spark@sha256:<digest> \
+IMAGE=ghcr.io/sybil-solutions/deepseek-v4.1-flash-exl3-spark@sha256:5817414f92e9bec0406dfc4575e16b282209f0cb1ead16fe53d51bac7ac9e9e4 \
 HEAD=<rank-0 host> WORKER=<rank-1 host> MODEL_DIR=/same/path/on/both \
   ~/dsv41_recipe/scripts/launch/dsv41_tp2.sh up
 ```
