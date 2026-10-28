@@ -18,9 +18,12 @@ being written or replaced never opens the gateway.
 
 Usage: when GATEWAY_USAGE_LOG names a file, one JSON line per answered
 request is appended to it: {t, api, model, prompt, completion, estimated,
-ttft_ms, ms}. Tokens come from the engine's usage block when it sends one,
-otherwise one per streamed delta (estimated: true). The plugin reads the file
-for the tokens-per-day and decode-speed figures on the card.
+ttft_ms, ms, cached, reasoning}. Tokens come from the engine's usage block
+when it sends one, otherwise one per streamed delta (estimated: true). cached
+is prompt_tokens_details.cached_tokens and reasoning is
+completion_tokens_details.reasoning_tokens; both are 0 when the engine reports
+neither. The plugin reads the file for the tokens-per-day and decode-speed
+figures on the card.
 
 Connections: at most GATEWAY_MAX_CONNECTIONS (default 64) are served at once;
 one more is closed at once. Each request, its headers and body, must arrive
@@ -84,6 +87,16 @@ def required_key():
         return None
 
 
+def usage_details(usage):
+    """The engine's cached-input and reasoning-output counts, 0 when it reports neither."""
+    usage = usage or {}
+    prompt = usage.get("prompt_tokens_details")
+    completion = usage.get("completion_tokens_details")
+    cached = prompt.get("cached_tokens") if isinstance(prompt, dict) else 0
+    reasoning = completion.get("reasoning_tokens") if isinstance(completion, dict) else 0
+    return int(cached or 0), int(reasoning or 0)
+
+
 class Meter:
     """One answer's accounting: tokens from the engine's usage when it sends one, else one per delta; time to first token."""
 
@@ -106,9 +119,11 @@ class Meter:
             return
         usage = usage or self.usage or {}
         now = time.monotonic()
+        cached, reasoning = usage_details(usage)
         row = {"t": int(time.time()), "api": self.api, "model": self.model, "prompt": usage.get("prompt_tokens", 0),
                "completion": usage.get("completion_tokens") or self.counted, "estimated": not usage,
-               "ttft_ms": int(((self.first or now) - self.t0) * 1000), "ms": int((now - self.t0) * 1000)}
+               "ttft_ms": int(((self.first or now) - self.t0) * 1000), "ms": int((now - self.t0) * 1000),
+               "cached": cached, "reasoning": reasoning}
         try:
             with USAGE_LOCK, open(USAGE_LOG, "a") as handle:
                 handle.write(json.dumps(row, separators=(",", ":")) + "\n")
@@ -372,10 +387,12 @@ def chat_to_anthropic(resp, model):
         content.append({"type": "tool_use", "id": call.get("id") or f"toolu_{uuid.uuid4().hex[:24]}",
                         "name": function.get("name"), "input": arguments})
     usage = resp.get("usage") or {}
+    cached, _ = usage_details(usage)
     return {
         "id": "msg_" + uuid.uuid4().hex[:24], "type": "message", "role": "assistant", "model": model,
         "content": content, "stop_reason": anthropic_stop(choice.get("finish_reason"), bool(tool_calls)), "stop_sequence": None,
-        "usage": {"input_tokens": usage.get("prompt_tokens", 0), "output_tokens": usage.get("completion_tokens", 0)},
+        "usage": {"input_tokens": usage.get("prompt_tokens", 0), "output_tokens": usage.get("completion_tokens", 0),
+                  "cache_read_input_tokens": cached},
     }
 
 
@@ -504,10 +521,12 @@ def chat_to_responses(resp, model, req):
         output.append({"type": "function_call", "id": "fc_" + uuid.uuid4().hex[:24], "call_id": call.get("id") or "call_" + uuid.uuid4().hex[:24],
                        "name": function.get("name"), "arguments": function.get("arguments") or "{}", "status": "completed"})
     usage = resp.get("usage") or {}
+    cached, reasoning = usage_details(usage)
     envelope = responses_envelope(model, req)
     envelope.update({"status": "completed", "output": output,
                      "usage": {"input_tokens": usage.get("prompt_tokens", 0), "output_tokens": usage.get("completion_tokens", 0),
-                               "total_tokens": usage.get("total_tokens", 0), "input_tokens_details": {"cached_tokens": 0}, "output_tokens_details": {"reasoning_tokens": 0}}})
+                               "total_tokens": usage.get("total_tokens", 0), "input_tokens_details": {"cached_tokens": cached},
+                               "output_tokens_details": {"reasoning_tokens": reasoning}}})
     return envelope
 
 
@@ -572,9 +591,11 @@ def responses_stream(handler, upstream, model, req, meter=None):
         item = {"type": "function_call", "id": call["id"], "call_id": call["call_id"], "name": call["name"], "arguments": call["arguments"], "status": "completed"}
         output.append((call["index"], item))
         event("response.output_item.done", {"output_index": call["index"], "item": item})
+    cached, reasoning = usage_details(usage)
     envelope.update({"status": "completed", "output": [item for _, item in sorted(output, key=lambda pair: pair[0])],
                      "usage": {"input_tokens": usage.get("prompt_tokens", 0), "output_tokens": usage.get("completion_tokens", 0),
-                               "total_tokens": usage.get("total_tokens", 0), "input_tokens_details": {"cached_tokens": 0}, "output_tokens_details": {"reasoning_tokens": 0}}})
+                               "total_tokens": usage.get("total_tokens", 0), "input_tokens_details": {"cached_tokens": cached},
+                               "output_tokens_details": {"reasoning_tokens": reasoning}}})
     event("response.completed", {"response": envelope})
     if meter:
         meter.done(usage)
