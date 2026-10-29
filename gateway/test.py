@@ -62,7 +62,9 @@ class FakeEngine(BaseHTTPRequestHandler):
         has_tool_result = any(m["role"] == "tool" for m in req["messages"])
         def usage():
             block = {"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14}
-            if req.get("test_usage") != "plain":
+            if req.get("test_usage") == "top":
+                block["reasoning_tokens"] = 9  # SGLang's shape: top level, outside completion_tokens_details
+            elif req.get("test_usage") != "plain":
                 block["prompt_tokens_details"] = {"cached_tokens": 6}
                 block["completion_tokens_details"] = {"reasoning_tokens": 3}
             return block
@@ -440,6 +442,10 @@ def main():
         time.sleep(0.1)
         rows = [json.loads(line) for line in open(usage_log)]
         check("usage log: an engine without details records zeros", rows[-1]["cached"] == 0 and rows[-1]["reasoning"] == 0 and rows[-1]["prompt"] == 10 and not rows[-1]["estimated"], str(rows[-1]))
+        status, body = call("/v1/chat/completions", {"model": "m", "test_usage": "top", "messages": [{"role": "user", "content": "hi"}]})
+        time.sleep(0.1)
+        rows = [json.loads(line) for line in open(usage_log)]
+        check("usage log: SGLang's top-level reasoning count is recorded", rows[-1]["reasoning"] == 9 and rows[-1]["cached"] == 0, str(rows[-1]))
 
         # A client without the key cannot hold the gateway: a request trickled in byte by byte is cut at the deadline,
         # and with every slot held an extra connection is closed, until the deadline frees the slots again.

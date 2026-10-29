@@ -93,7 +93,9 @@ def usage_details(usage):
     prompt = usage.get("prompt_tokens_details")
     completion = usage.get("completion_tokens_details")
     cached = prompt.get("cached_tokens") if isinstance(prompt, dict) else 0
-    reasoning = completion.get("reasoning_tokens") if isinstance(completion, dict) else 0
+    reasoning = completion.get("reasoning_tokens") if isinstance(completion, dict) else None
+    if reasoning is None:
+        reasoning = usage.get("reasoning_tokens")  # SGLang reports this count top level, not under details
     return int(cached or 0), int(reasoning or 0)
 
 
