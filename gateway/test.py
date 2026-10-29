@@ -50,6 +50,8 @@ class FakeEngine(BaseHTTPRequestHandler):
         req = json.loads(self.rfile.read(length))
         FakeEngine.last_request = req
         if self.path.split("?")[0] == "/tokenize":
+            if "slow tokenize" in json.dumps(req.get("messages") or []):
+                time.sleep(7)  # longer than the gateway waits for a count
             if "no tokenize" in json.dumps(req.get("messages") or []):
                 body = json.dumps({"error": {"message": "not found", "type": "NotFoundError"}}).encode()
                 self.send_response(404)
@@ -442,10 +444,15 @@ def main():
         status, body = call("/v1/messages/count_tokens", count_req)
         check("count_tokens: the engine's count is returned", status == 200 and body["input_tokens"] == 42, str(body))
         check("count_tokens: the probe is the converted chat body", FakeEngine.last_request.get("messages", [{}])[0].get("content") == "be brief" and bool(FakeEngine.last_request.get("tools")), str(FakeEngine.last_request)[:200])
-        fallback = {"model": "claude-x", "messages": [{"role": "user", "content": "no tokenize"}]}
-        expected = max(1, len(json.dumps(fallback["messages"]) + json.dumps("")) // 4)
+        fallback = {"model": "claude-x", "tools": tools, "messages": [{"role": "user", "content": "no tokenize"}]}
+        expected = max(1, len(json.dumps(fallback["messages"]) + json.dumps("") + json.dumps(tools)) // 4)
         status, body = call("/v1/messages/count_tokens", fallback)
-        check("count_tokens: falls back to the estimate without the engine route", status == 200 and body["input_tokens"] == expected, f'{body} expected {expected}')
+        check("count_tokens: falls back to an estimate that counts tools without the engine route", status == 200 and body["input_tokens"] == expected, f'{body} expected {expected}')
+        slow_count = {"model": "claude-x", "messages": [{"role": "user", "content": "slow tokenize"}]}
+        t0 = time.monotonic()
+        status, body = call("/v1/messages/count_tokens", slow_count)
+        waited = time.monotonic() - t0
+        check("count_tokens: a slow engine gets the estimate after a bounded wait", status == 200 and body["input_tokens"] == max(1, len(json.dumps(slow_count["messages"]) + json.dumps("")) // 4) and waited < 6.5, f"{body} after {waited:.1f}s")
 
         # A client without the key cannot hold the gateway: a request trickled in byte by byte is cut at the deadline,
         # and with every slot held an extra connection is closed, until the deadline frees the slots again.

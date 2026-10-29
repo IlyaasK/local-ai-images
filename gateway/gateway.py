@@ -63,6 +63,7 @@ MODEL_ALIAS = os.environ.get("MODEL", "")  # served model id; client model names
 TIMEOUT = int(os.environ.get("UPSTREAM_TIMEOUT", "600"))
 USAGE_LOG = os.environ.get("GATEWAY_USAGE_LOG", "")
 USAGE_LOCK = threading.Lock()
+COUNT_TIMEOUT = 5  # seconds the engine's /tokenize may take before count_tokens answers with its estimate
 REQUEST_DEADLINE = float(os.environ.get("GATEWAY_REQUEST_DEADLINE", "10"))
 WRITE_DEADLINE = float(os.environ.get("GATEWAY_WRITE_DEADLINE", "30"))
 MAX_CONNECTIONS = int(os.environ.get("GATEWAY_MAX_CONNECTIONS", "64"))
@@ -120,9 +121,9 @@ class Meter:
 class Upstream:
     """One HTTP request to the engine. `stream()` yields SSE data payloads as parsed JSON."""
 
-    def __init__(self, method, path, body=None):
+    def __init__(self, method, path, body=None, timeout=TIMEOUT):
         parsed = urllib.parse.urlparse(UPSTREAM)
-        self.conn = http.client.HTTPConnection(parsed.hostname, parsed.port or 80, timeout=TIMEOUT)
+        self.conn = http.client.HTTPConnection(parsed.hostname, parsed.port or 80, timeout=timeout)
         headers = {"Content-Type": "application/json", "Accept": "*/*"}
         data = json.dumps(body).encode() if body is not None else None
         self.conn.request(method, path, body=data, headers=headers)  # request is sent; the answer is read by begin()
@@ -783,14 +784,15 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(200, chat_to_anthropic(resp, model))
 
     def count_tokens(self, req):
-        """The engine's own token count for the exact prompt; a rough estimate when it has no /tokenize."""
-        text = json.dumps(req.get("messages", [])) + json.dumps(req.get("system", ""))
+        """The engine's own token count for the exact prompt; a rough estimate when it has no /tokenize or is too
+        slow to answer one (a busy engine must not hold a count the client asks for before every turn)."""
+        text = json.dumps(req.get("messages", [])) + json.dumps(req.get("system", "")) + (json.dumps(req["tools"]) if req.get("tools") else "")
         try:
             chat = anthropic_to_chat(req)
             probe = {"model": chat["model"], "messages": chat["messages"]}
             if chat.get("tools"):
                 probe["tools"] = chat["tools"]
-            up = Upstream("POST", "/tokenize", probe)
+            up = Upstream("POST", "/tokenize", probe, timeout=COUNT_TIMEOUT)
             up.begin()
             if up.status == 200:
                 count = up.json().get("count")
