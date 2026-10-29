@@ -6,7 +6,7 @@ UPSTREAM (default http://engine:8000), which speaks OpenAI chat completions.
 
   /v1/models, /v1/chat/completions   pass through unchanged (streaming too)
   /v1/messages                       Anthropic Messages  -> chat completions
-  /v1/messages/count_tokens          rough estimate, Anthropic shape
+  /v1/messages/count_tokens          engine /tokenize, else a rough estimate
   /v1/responses                      OpenAI Responses    -> chat completions
   /health                            200 when the engine answers /v1/models
 
@@ -696,8 +696,7 @@ class Handler(BaseHTTPRequestHandler):
             if path in ("/v1/messages", "/messages"):
                 return self.handle_messages(body)
             if path in ("/v1/messages/count_tokens", "/messages/count_tokens"):
-                text = json.dumps(body.get("messages", [])) + json.dumps(body.get("system", ""))
-                return self.send_json(200, {"input_tokens": max(1, len(text) // 4)})
+                return self.count_tokens(body)
             if path in ("/v1/responses", "/responses"):
                 return self.handle_responses(body)
             if path in ("/v1/completions", "/completions"):
@@ -782,6 +781,26 @@ class Handler(BaseHTTPRequestHandler):
             resp = up.json()
             meter.done(resp.get("usage"))
             self.send_json(200, chat_to_anthropic(resp, model))
+
+    def count_tokens(self, req):
+        """The engine's own token count for the exact prompt; a rough estimate when it has no /tokenize."""
+        text = json.dumps(req.get("messages", [])) + json.dumps(req.get("system", ""))
+        try:
+            chat = anthropic_to_chat(req)
+            probe = {"model": chat["model"], "messages": chat["messages"]}
+            if chat.get("tools"):
+                probe["tools"] = chat["tools"]
+            up = Upstream("POST", "/tokenize", probe)
+            up.begin()
+            if up.status == 200:
+                count = up.json().get("count")
+                if isinstance(count, int) and count > 0:
+                    return self.send_json(200, {"input_tokens": count})
+            else:
+                up.raw()
+        except (ConnectionError, OSError, http.client.HTTPException, ValueError, KeyError):
+            pass
+        self.send_json(200, {"input_tokens": max(1, len(text) // 4)})
 
     def handle_responses(self, body):
         model = body.get("model") or MODEL_ALIAS
