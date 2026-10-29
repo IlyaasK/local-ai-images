@@ -19,9 +19,10 @@ being written or replaced never opens the gateway.
 Usage: when GATEWAY_USAGE_LOG names a file, one JSON line per answered
 request is appended to it: {t, api, model, prompt, completion, estimated,
 ttft_ms, ms}. Tokens come from the engine's usage block when it sends one,
-otherwise one per streamed delta (estimated: true). running and queued are
-added when the engine's /metrics reports them (vLLM and SGLang do). The plugin
-reads the file for the tokens-per-day and decode-speed figures on the card.
+otherwise one per streamed delta (estimated: true). running and queued, the
+engine's occupancy when the request arrived, are added when its /metrics
+reports them (vLLM and SGLang do). The plugin reads the file for the
+tokens-per-day and decode-speed figures on the card.
 
 Connections: at most GATEWAY_MAX_CONNECTIONS (default 64) are served at once;
 one more is closed at once. Each request, its headers and body, must arrive
@@ -103,7 +104,7 @@ def queue_from_metrics(text):
             if name in names:
                 try:
                     value = int(float(parts[1]))
-                except ValueError:
+                except (ValueError, OverflowError):  # a malformed or infinite sample is skipped, not summed
                     continue
                 sums[key] = (sums[key] or 0) + value
     return sums["running"], sums["queued"]
@@ -127,7 +128,7 @@ def poll_queue():
             with QUEUE_LOCK:
                 QUEUE.update(running=running, queued=queued, at=time.monotonic())
             delay = QUEUE_POLL
-        except (OSError, ValueError):
+        except Exception:  # a refused or truncated scrape (IncompleteRead) must not end the thread for the gateway's life
             with QUEUE_LOCK:
                 QUEUE.update(running=None, queued=None, at=0.0)
             delay = max(60.0, QUEUE_POLL)
@@ -140,6 +141,7 @@ class Meter:
     def __init__(self, api, model):
         self.api, self.model, self.t0 = api, model, time.monotonic()
         self.first, self.counted, self.usage = None, 0, None
+        self.queue = queue_snapshot()  # what the request found on arrival: the queue that explains its time to first token
 
     def chunk(self, obj):
         if obj.get("usage"):
@@ -159,7 +161,7 @@ class Meter:
         row = {"t": int(time.time()), "api": self.api, "model": self.model, "prompt": usage.get("prompt_tokens", 0),
                "completion": usage.get("completion_tokens") or self.counted, "estimated": not usage,
                "ttft_ms": int(((self.first or now) - self.t0) * 1000), "ms": int((now - self.t0) * 1000)}
-        running, queued = queue_snapshot()
+        running, queued = self.queue
         if running is not None:
             row["running"] = running
         if queued is not None:

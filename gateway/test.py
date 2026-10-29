@@ -445,6 +445,8 @@ def main():
             "vllm:num_requests_running{a=\"1\"} 1\nvllm:num_requests_running{a=\"2\"} 2\nvllm:num_requests_waiting 0\n") == (3, 0)
             and gw.queue_from_metrics('sglang:num_running_reqs{model="x"} 4\nsglang:num_queue_reqs 5\n') == (4, 5))
         check("queue metrics: an engine without them reports nothing", gw.queue_from_metrics("process_cpu_seconds_total 1.2\n") == (None, None))
+        check("queue metrics: an infinite or malformed sample is skipped", gw.queue_from_metrics(
+            "vllm:num_requests_running +Inf\nvllm:num_requests_running 2\nvllm:num_requests_waiting x\n") == (2, None))
 
         # A client without the key cannot hold the gateway: a request trickled in byte by byte is cut at the deadline,
         # and with every slot held an extra connection is closed, until the deadline frees the slots again.
